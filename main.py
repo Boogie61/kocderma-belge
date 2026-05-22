@@ -38,7 +38,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-haiku-4-5-20251001"        # yedek (JSON) yontemi icin
+SKILL_MODEL = "claude-haiku-4-5-20251001"  # resmi Skill'ler icin (ucuz). Kalite icin "claude-sonnet-4-6" yap.
+FILES_API = "https://api.anthropic.com/v1/files"
+SKILL_BETAS = "code-execution-2025-08-25,skills-2025-10-02,files-api-2025-04-14"
+SKILLS_LIST = [{"type": "anthropic", "skill_id": _s, "version": "latest"} for _s in ["pptx", "docx", "xlsx", "pdf"]]
 FILES_DIR = os.environ.get("FILES_DIR", "/tmp/genfiles")
 os.makedirs(FILES_DIR, exist_ok=True)
 
@@ -124,12 +128,21 @@ Sunum (pptx) için ek kurallar:
 - SADECE geçerli JSON döndür."""
 
 
+DOC_SKILL_SYSTEM = (
+    "Sen kocderma.com icin bir belge asistanisin. Kullanicinin istedigi belgeyi UYGUN Skill ile "
+    "olustur: PowerPoint (pptx), Word (docx), Excel (xlsx) veya PDF. Profesyonel, tasarimli ve dolu "
+    "bir cikti uret. Icerik Turkce ve dermatoloji egitimine uygun olsun; onemli Ingilizce terimleri "
+    "parantez icinde ekle. Asil icerigi DOSYAYA koy; sohbet yanitin kisa olsun. Bu bir egitim aracidir; "
+    "tani koyma, kisiye ozel tibbi tavsiye verme."
+)
+
+
 class DocReq(BaseModel):
     messages: list
 
 
 def call_claude(messages):
-    body = {"model": MODEL, "max_tokens": 12000, "system": SYSTEM, "messages": messages}
+    body = {"model": MODEL, "max_tokens": 8000, "system": SYSTEM, "messages": messages}
     last = "Claude API hatasi"
     for attempt in range(4):
         try:
@@ -515,6 +528,85 @@ def build_pdf(spec, path):
     doc.build(story)
 
 
+def _anthropic_headers(betas):
+    h = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    if betas:
+        h["anthropic-beta"] = betas
+    return h
+
+
+def _collect_file_ids(content):
+    ids = []
+    for block in content or []:
+        if not isinstance(block, dict):
+            continue
+        if "code_execution_tool_result" in block.get("type", ""):
+            c = block.get("content")
+            inner = c.get("content") if isinstance(c, dict) else None
+            if isinstance(inner, list):
+                for o in inner:
+                    if isinstance(o, dict) and o.get("file_id"):
+                        ids.append(o["file_id"])
+    return ids
+
+
+def _download_anthropic_file(fid):
+    h = _anthropic_headers("files-api-2025-04-14")
+    name = "belge"
+    try:
+        mr = requests.get(FILES_API + "/" + fid, headers=h, timeout=60)
+        if mr.status_code == 200:
+            name = mr.json().get("filename", name) or name
+    except Exception:
+        pass
+    cr = requests.get(FILES_API + "/" + fid + "/content", headers=h, timeout=180)
+    cr.raise_for_status()
+    return name, cr.content
+
+
+def skills_generate(messages):
+    """Anthropic resmi Skill'leri (code execution) ile gercek dosya uretir."""
+    container = {"skills": SKILLS_LIST}
+    msgs = list(messages)
+    data = {}
+    for _ in range(8):
+        body = {
+            "model": SKILL_MODEL,
+            "max_tokens": 12000,
+            "system": DOC_SKILL_SYSTEM,
+            "messages": msgs,
+            "tools": [{"type": "code_execution_20250825", "name": "code_execution"}],
+            "container": container,
+        }
+        r = requests.post("https://api.anthropic.com/v1/messages",
+                          headers=_anthropic_headers(SKILL_BETAS), json=body, timeout=240)
+        if r.status_code != 200:
+            try:
+                msg = r.json().get("error", {}).get("message", "")
+            except Exception:
+                msg = (r.text or "")[:200]
+            raise RuntimeError("skill api " + str(r.status_code) + ": " + (msg or ""))
+        data = r.json()
+        cid = (data.get("container") or {}).get("id")
+        if cid:
+            container = {"id": cid, "skills": SKILLS_LIST}
+        if data.get("stop_reason") == "pause_turn":
+            msgs = msgs + [{"role": "assistant", "content": data.get("content", [])}]
+            continue
+        break
+    reply = "\n".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+    files = []
+    for fid in _collect_file_ids(data.get("content", [])):
+        name, blob = _download_anthropic_file(fid)
+        # base64 döndür — /tmp'ye yazma (Render'da kaybolur → "dosya yok")
+        files.append({
+            "name": name,
+            "size": len(blob),
+            "b64": base64.b64encode(blob).decode("ascii"),
+        })
+    return reply, files
+
+
 BUILDERS = {"docx": build_docx, "xlsx": build_xlsx, "pptx": build_pptx, "pdf": build_pdf}
 
 
@@ -530,11 +622,24 @@ def make_doc(req: DocReq):
     if not req.messages:
         return {"reply": "Bos istek.", "files": []}
 
+    # 1) Resmi Skill'lerle uret (en iyi kalite)
+    skill_err = ""
+    try:
+        s_reply, s_files = skills_generate(req.messages)
+        if s_files:
+            print("[make_doc] Skills yolu BASARILI ->", len(s_files), "dosya", flush=True)
+            return {"reply": s_reply or "Belge hazir.", "files": s_files}
+        skill_err = "skill dosya uretmedi"
+    except Exception as e:
+        skill_err = str(e)
+    print("[make_doc] Skills yolu kullanilamadi -> yedek (python). Sebep:", skill_err, flush=True)
+
+    # 2) Yedek: JSON taslagi + python ile uret
     try:
         text = call_claude(req.messages)
         spec = parse_spec(text)
     except Exception as e:
-        return {"reply": "Belge olusturulamadi: " + str(e), "files": []}
+        return {"reply": "Belge olusturulamadi (skill: " + skill_err + " / yedek: " + str(e) + ")", "files": []}
 
     kind = str(spec.get("kind") or "docx").lower()
     if kind not in BUILDERS:
