@@ -21,7 +21,11 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from docx import Document
+from docx.shared import Pt as DPt, RGBColor as DRGB
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -33,6 +37,7 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, Table, TableStyle,
+    HRFlowable,
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -201,15 +206,60 @@ def parse_spec(text):
     return json.loads(t)
 
 
+def _docx_shade(cell, hexc):
+    """Word tablo hücresine arka plan rengi ver."""
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hexc)
+    tcPr.append(shd)
+
+
 def build_docx(spec, path):
+    pal = doc_palette(spec.get("_theme"))
+    accent = DRGB.from_string(pal["accent"])
+    ink = DRGB.from_string(pal["ink"])
+    white = DRGB.from_string("FFFFFF")
+
     doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = DPt(11)
+
+    # ---- Başlık + aksan çizgisi ----
     if spec.get("title"):
-        doc.add_heading(str(spec["title"]), 0)
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = DPt(2)
+        run = p.add_run(str(spec["title"]))
+        run.bold = True
+        run.font.size = DPt(24)
+        run.font.color.rgb = accent
+        run.font.name = "Calibri"
+        bar = doc.add_paragraph()
+        bar.paragraph_format.space_after = DPt(12)
+        pPr = bar._p.get_or_add_pPr()
+        bd = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "20")
+        bottom.set(qn("w:space"), "1")
+        bottom.set(qn("w:color"), pal["accent"])
+        bd.append(bottom)
+        pPr.append(bd)
+
     for b in spec.get("blocks", []) or []:
         tp = b.get("type")
         if tp == "heading":
             lvl = min(max(int(b.get("level", 1) or 1), 1), 4)
-            doc.add_heading(str(b.get("text", "")), lvl)
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = DPt(12)
+            p.paragraph_format.space_after = DPt(3)
+            run = p.add_run(str(b.get("text", "")))
+            run.bold = True
+            run.font.name = "Calibri"
+            run.font.size = DPt(16 if lvl == 1 else (13 if lvl == 2 else 11.5))
+            run.font.color.rgb = accent if lvl <= 2 else ink
         elif tp == "paragraph":
             doc.add_paragraph(str(b.get("text", "")))
         elif tp == "bullets":
@@ -232,20 +282,39 @@ def build_docx(spec, path):
                     cells = table.add_row().cells
                     for i, h in enumerate(headers):
                         if i < ncol:
-                            cells[i].text = str(h)
-                for row in rows:
+                            cells[i].text = ""
+                            r = cells[i].paragraphs[0].add_run(str(h))
+                            r.bold = True
+                            r.font.size = DPt(10)
+                            r.font.color.rgb = white
+                            r.font.name = "Calibri"
+                            _docx_shade(cells[i], pal["accent"])
+                for ri, row in enumerate(rows):
                     cells = table.add_row().cells
                     for i, c in enumerate(row):
                         if i < ncol:
                             cells[i].text = str(c)
+                            if ri % 2 == 1:
+                                _docx_shade(cells[i], pal["tint"])
+            doc.add_paragraph()
     doc.save(path)
 
 
 def build_xlsx(spec, path):
+    pal = doc_palette(spec.get("_theme"))
     wb = Workbook()
     sheets = spec.get("sheets")
     if not sheets:
         sheets = [{"name": "Sayfa1", "headers": spec.get("headers", []), "rows": spec.get("rows", [])}]
+
+    head_fill = PatternFill("solid", fgColor=pal["accent"])
+    head_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+    alt_fill = PatternFill("solid", fgColor=pal["tint"])
+    body_font = Font(name="Calibri", size=11)
+    thin = Side(style="thin", color="D9DEE6")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_align = Alignment(vertical="center", horizontal="left")
+
     first = True
     for sh in sheets:
         ws = wb.active if first else wb.create_sheet()
@@ -253,10 +322,41 @@ def build_xlsx(spec, path):
         ws.title = (str(sh.get("name") or "Sayfa"))[:31]
         headers = sh.get("headers", []) or []
         rows = sh.get("rows", []) or []
+
+        body_start = 1
         if headers:
             ws.append([str(h) for h in headers])
-        for row in rows:
+            for c in range(1, len(headers) + 1):
+                cell = ws.cell(row=1, column=c)
+                cell.fill = head_fill
+                cell.font = head_font
+                cell.alignment = head_align
+                cell.border = border
+            ws.row_dimensions[1].height = 22
+            ws.freeze_panes = "A2"
+            body_start = 2
+
+        for ri, row in enumerate(rows):
             ws.append([str(c) for c in row])
+            xr = body_start + ri
+            for c in range(1, len(row) + 1):
+                cell = ws.cell(row=xr, column=c)
+                cell.font = body_font
+                cell.border = border
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                if ri % 2 == 1:
+                    cell.fill = alt_fill
+
+        # Sütun genişliklerini içeriğe göre ayarla
+        ncol = max([len(headers)] + [len(r) for r in rows] + [1])
+        for c in range(1, ncol + 1):
+            width = 12
+            for r in range(1, ws.max_row + 1):
+                v = ws.cell(row=r, column=c).value
+                if v is not None:
+                    width = max(width, min(len(str(v)) + 3, 50))
+            ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = width
+
     wb.save(path)
 
 
@@ -314,6 +414,22 @@ def _rgb(t):
 def get_theme(key):
     src = PX_THEMES.get((key or "klinik").lower(), PX_THEMES["klinik"])
     return {k: (_rgb(v) if isinstance(v, tuple) else v) for k, v in src.items()}
+
+
+# Word/Excel/PDF için tema paleti — beyaz zeminde okunur renkler (hex string).
+DOC_PALETTES = {
+    "klinik": {"accent": "1F5FB3", "tint": "EEF3F9"},
+    "koyu":   {"accent": "25528C", "tint": "ECF0F6"},
+    "mor":    {"accent": "6D28D9", "tint": "F3EEFB"},
+    "sade":   {"accent": "C2410C", "tint": "F6F1ED"},
+}
+DOC_INK = "242832"
+DOC_DIM = "5A6678"
+
+
+def doc_palette(key):
+    p = DOC_PALETTES.get((key or "klinik").lower(), DOC_PALETTES["klinik"])
+    return {"accent": p["accent"], "tint": p["tint"], "ink": DOC_INK, "dim": DOC_DIM}
 
 
 def _px_bg(slide, color):
@@ -535,15 +651,33 @@ def build_pptx(spec, path):
 
 
 def build_pdf(spec, path):
+    pal = doc_palette(spec.get("_theme"))
+    acc = colors.HexColor("#" + pal["accent"])
+    tint = colors.HexColor("#" + pal["tint"])
+    ink = colors.HexColor("#" + pal["ink"])
+
     doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm,
                             topMargin=18 * mm, bottomMargin=18 * mm)
     styles = getSampleStyleSheet()
     for sn in ["Title", "Heading1", "Heading2", "Heading3", "BodyText"]:
         styles[sn].fontName = PDF_FONT
+    styles["Title"].textColor = acc
+    styles["Title"].alignment = 0      # sola yasla
+    styles["Title"].fontSize = 22
+    styles["Heading1"].textColor = acc
+    styles["Heading2"].textColor = acc
+    styles["Heading3"].textColor = ink
+    styles["BodyText"].textColor = ink
+    styles["BodyText"].leading = 14
+
+    cell_style = styles["BodyText"].clone("cell", fontSize=9, leading=11)
+    head_cell = cell_style.clone("headcell", textColor=colors.white)
+
     story = []
     if spec.get("title"):
         story.append(Paragraph(str(spec["title"]), styles["Title"]))
-        story.append(Spacer(1, 8))
+        story.append(HRFlowable(width="100%", thickness=2.2, color=acc,
+                                spaceBefore=3, spaceAfter=12))
     for b in spec.get("blocks", []) or []:
         tp = b.get("type")
         if tp == "heading":
@@ -561,23 +695,27 @@ def build_pdf(spec, path):
             rows = b.get("rows", []) or []
             data = []
             if headers:
-                data.append([str(h) for h in headers])
+                data.append([Paragraph(str(h), head_cell) for h in headers])
             for row in rows:
-                data.append([str(c) for c in row])
+                data.append([Paragraph(str(c), cell_style) for c in row])
             if data:
-                tbl = Table(data, hAlign="LEFT")
-                tbl.setStyle(TableStyle([
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F5FB3")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTNAME", (0, 0), (-1, -1), PDF_FONT),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                tbl = Table(data, hAlign="LEFT", repeatRows=1 if headers else 0)
+                ts = [
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D9DEE6")),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ]))
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+                if headers:
+                    ts.append(("BACKGROUND", (0, 0), (-1, 0), acc))
+                    ts.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, tint]))
+                else:
+                    ts.append(("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, tint]))
+                tbl.setStyle(TableStyle(ts))
                 story.append(tbl)
-                story.append(Spacer(1, 6))
+                story.append(Spacer(1, 8))
     if not story:
         story.append(Paragraph(str(spec.get("summary", "Belge")), styles["BodyText"]))
     doc.build(story)
