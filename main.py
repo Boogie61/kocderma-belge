@@ -12,6 +12,7 @@ import re
 import json
 import uuid
 import time
+import base64
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -543,15 +544,32 @@ def make_doc(req: DocReq):
     if not filename.lower().endswith("." + kind):
         filename = filename + "." + kind
 
-    stored = uuid.uuid4().hex + "__" + filename
-    path = os.path.join(FILES_DIR, stored)
+    tmp = os.path.join(FILES_DIR, uuid.uuid4().hex + "." + kind)
     try:
-        BUILDERS[kind](spec, path)
+        BUILDERS[kind](spec, tmp)
+        with open(tmp, "rb") as fh:
+            data = fh.read()
     except Exception as e:
         return {"reply": "Dosya uretiminde hata: " + str(e), "files": []}
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
-    return {"reply": str(spec.get("summary") or "Belge hazir."),
-            "files": [{"id": stored, "name": filename}]}
+    # Dosyayı yanıtın içinde doğrudan (base64) gönderiyoruz. Render'ın geçici
+    # diskine güvenmiyoruz — ikinci bir indirme isteği olmadığı için "dosya yok"
+    # hatası ve cold-start/uyku arası kopma riski ortadan kalkar.
+    return {
+        "reply": str(spec.get("summary") or "Belge hazir."),
+        "files": [{
+            "name": filename,
+            "kind": kind,
+            "size": len(data),
+            "b64": base64.b64encode(data).decode("ascii"),
+        }],
+    }
 
 
 @app.get("/files/{file_id}")
