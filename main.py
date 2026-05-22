@@ -22,6 +22,10 @@ from pydantic import BaseModel
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -81,15 +85,27 @@ Yanıtın SADECE JSON olsun: açıklama yazma, kod bloğu işareti (```) kullanm
      {"type":"numbered","items":["...","..."]},
      {"type":"table","headers":["..."],"rows":[["...","..."]]}
   ],
+  "subtitle": "Sunum kapağı için kısa alt başlık (pptx)",
   "sheets": [ {"name":"Sayfa1","headers":["..."],"rows":[["..."]]} ],
-  "slides": [ {"title":"...","bullets":["...","..."]} ]
+  "slides": [
+     {"title":"Bölüm başlığı","layout":"section"},
+     {"title":"İçerik slaytı","layout":"content","bullets":["...","..."]}
+  ]
 }
 
 Kurallar:
 - Kullanıcı format belirttiyse (Word=docx, Excel=xlsx, sunum/PowerPoint=pptx, PDF=pdf) onu kullan; belirtmediyse içeriğe en uygun olanı seç.
-- docx ve pdf için "blocks" doldur. xlsx için "sheets". pptx için "slides".
+- docx ve pdf için "blocks" doldur. xlsx için "sheets". pptx için "title" + "subtitle" + "slides".
 - İçeriği Türkçe, dolu ve dermatoloji eğitimine uygun hazırla; önemli İngilizce terimleri parantez içinde ekle.
 - Bu bir eğitim aracıdır; tanı koyma, kişiye özel tıbbi tavsiye verme.
+
+Sunum (pptx) için ek kurallar:
+- "title" konuyu, "subtitle" kısa bir tanımı versin — kapak slaytı bunlardan üretilir.
+- "slides" mantıklı bir akış olsun: her ana konu öbeğinden önce bir bölüm ayracı ekle
+  ("layout":"section", sadece "title" — bullets YOK).
+- İçerik slaytları "layout":"content" ve her birinde 3-6 KISA madde olsun (tam paragraf değil,
+  öz ifadeler). Slaytı metin duvarına çevirme.
+- Kapsamlı sunum istenirse 12-20 slayt üret; en sonda bir "Özet / Anahtar Noktalar" slaytı ekle.
 - SADECE geçerli JSON döndür."""
 
 
@@ -98,7 +114,7 @@ class DocReq(BaseModel):
 
 
 def call_claude(messages):
-    body = {"model": MODEL, "max_tokens": 8192, "system": SYSTEM, "messages": messages}
+    body = {"model": MODEL, "max_tokens": 12000, "system": SYSTEM, "messages": messages}
     last = "Claude API hatasi"
     for attempt in range(4):
         try:
@@ -201,23 +217,118 @@ def build_xlsx(spec, path):
     wb.save(path)
 
 
+# ---- pptx klinik-mavi tema ----
+PX_NAVY  = RGBColor(0x0E, 0x1A, 0x2B)   # koyu lacivert
+PX_BLUE  = RGBColor(0x1F, 0x5F, 0xB3)   # klinik mavi (vurgu)
+PX_BLUED = RGBColor(0x14, 0x3F, 0x7A)   # koyu mavi
+PX_LIGHT = RGBColor(0xF7, 0xF8, 0xFA)   # açık zemin
+PX_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+PX_INK   = RGBColor(0x1A, 0x24, 0x33)   # metin
+PX_DIM   = RGBColor(0x5A, 0x66, 0x78)   # soluk metin
+PX_SOFT  = RGBColor(0xDD, 0xE7, 0xF5)   # açık mavi
+PX_FONT  = "Calibri"
+
+
+def _px_bg(slide, color):
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = color
+
+
+def _px_rect(slide, x, y, w, h, color):
+    shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = color
+    shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
+
+
+def _px_box(slide, x, y, w, h, anchor=MSO_ANCHOR.TOP):
+    tb = slide.shapes.add_textbox(x, y, w, h)
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = anchor
+    return tf
+
+
+def _px_run(p, text, size, color, bold=False, italic=False):
+    r = p.add_run()
+    r.text = text
+    r.font.size = Pt(size)
+    r.font.color.rgb = color
+    r.font.bold = bold
+    r.font.italic = italic
+    r.font.name = PX_FONT
+    return r
+
+
 def build_pptx(spec, path):
     prs = Presentation()
-    if spec.get("title"):
-        s = prs.slides.add_slide(prs.slide_layouts[0])
-        s.shapes.title.text = str(spec["title"])
-        if len(s.placeholders) > 1:
-            s.placeholders[1].text = str(spec.get("subtitle", "") or "")
-    for sl in spec.get("slides", []) or []:
-        s = prs.slides.add_slide(prs.slide_layouts[1])
-        s.shapes.title.text = str(sl.get("title", ""))
+    prs.slide_width = Inches(13.333)   # 16:9
+    prs.slide_height = Inches(7.5)
+    blank = prs.slide_layouts[6]
+    SW, SH = prs.slide_width, prs.slide_height
+
+    title = str(spec.get("title") or "Sunum")
+    subtitle = str(spec.get("subtitle") or "")
+    slides = spec.get("slides", []) or []
+
+    # ---- Kapak slaytı ----
+    cover = prs.slides.add_slide(blank)
+    _px_bg(cover, PX_BLUE)
+    _px_rect(cover, 0, 0, Inches(0.28), SH, PX_BLUED)
+    tf = _px_box(cover, Inches(1.0), Inches(2.25), Inches(11.3), Inches(0.5))
+    _px_run(tf.paragraphs[0], "BOLOGNIA DERMATOLOJİ  ·  kocderma.com", 14, PX_SOFT, bold=True)
+    tf = _px_box(cover, Inches(1.0), Inches(2.75), Inches(11.4), Inches(2.3))
+    _px_run(tf.paragraphs[0], title, 44, PX_WHITE, bold=True)
+    _px_rect(cover, Inches(1.05), Inches(4.95), Inches(2.2), Inches(0.06), PX_WHITE)
+    if subtitle:
+        tf = _px_box(cover, Inches(1.0), Inches(5.2), Inches(11.3), Inches(1.4))
+        _px_run(tf.paragraphs[0], subtitle, 19, PX_SOFT)
+
+    total = len(slides)
+    section_no = 0
+    for idx, sl in enumerate(slides):
+        s_title = str(sl.get("title", "") or "")
         bullets = sl.get("bullets", []) or []
-        if bullets:
-            tf = s.placeholders[1].text_frame
-            tf.text = str(bullets[0])
-            for it in bullets[1:]:
-                p = tf.add_paragraph()
-                p.text = str(it)
+        layout = str(sl.get("layout", "") or "").lower()
+        is_section = (layout == "section") or (not bullets and layout != "content")
+
+        slide = prs.slides.add_slide(blank)
+
+        if is_section:
+            section_no += 1
+            _px_bg(slide, PX_NAVY)
+            _px_rect(slide, 0, 0, Inches(0.28), SH, PX_BLUE)
+            tf = _px_box(slide, Inches(1.0), Inches(2.05), Inches(5), Inches(1.4))
+            _px_run(tf.paragraphs[0], "%02d" % section_no, 54, PX_BLUE, bold=True)
+            tf = _px_box(slide, Inches(1.0), Inches(3.05), Inches(11.3), Inches(2.2))
+            _px_run(tf.paragraphs[0], s_title, 36, PX_WHITE, bold=True)
+            _px_rect(slide, Inches(1.05), Inches(4.55), Inches(1.8), Inches(0.06), PX_BLUE)
+        else:
+            _px_bg(slide, PX_LIGHT)
+            _px_rect(slide, 0, 0, SW, Inches(0.16), PX_BLUE)
+            tf = _px_box(slide, Inches(0.85), Inches(0.55), Inches(11.6), Inches(1.05))
+            _px_run(tf.paragraphs[0], s_title, 30, PX_NAVY, bold=True)
+            _px_rect(slide, Inches(0.9), Inches(1.6), Inches(1.4), Inches(0.055), PX_BLUE)
+            tf = _px_box(slide, Inches(0.9), Inches(2.0), Inches(11.5), Inches(4.7))
+            for i, b in enumerate(bullets):
+                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                p.space_after = Pt(12)
+                p.line_spacing = 1.18
+                _px_run(p, "▪  ", 18, PX_BLUE, bold=True)
+                _px_run(p, str(b), 18, PX_INK)
+            _px_rect(slide, Inches(0.9), Inches(6.84), Inches(11.5), Inches(0.02), PX_SOFT)
+            tf = _px_box(slide, Inches(0.9), Inches(6.9), Inches(9.5), Inches(0.4))
+            _px_run(tf.paragraphs[0], title + "  ·  kocderma.com", 10, PX_DIM)
+
+        # sayfa numarası (kapak hariç)
+        tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
+        tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
+        _px_run(tf.paragraphs[0], "%d / %d" % (idx + 1, total), 10,
+                PX_SOFT if is_section else PX_DIM)
+
     prs.save(path)
 
 
