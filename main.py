@@ -89,7 +89,14 @@ Yanıtın SADECE JSON olsun: açıklama yazma, kod bloğu işareti (```) kullanm
   "sheets": [ {"name":"Sayfa1","headers":["..."],"rows":[["..."]]} ],
   "slides": [
      {"title":"Bölüm başlığı","layout":"section"},
-     {"title":"İçerik slaytı","layout":"content","bullets":["...","..."]}
+     {"title":"İçerik slaytı","layout":"content","bullets":["...","..."]},
+     {"title":"Karşılaştırma","layout":"two-col","columns":[
+        {"heading":"Sütun A","bullets":["...","..."]},
+        {"heading":"Sütun B","bullets":["...","..."]}]},
+     {"title":"Tablo slaytı","layout":"table","headers":["...","..."],"rows":[["...","..."]]},
+     {"title":"Vurgu","layout":"callout","text":"Vurgulanacak tek anahtar cümle"},
+     {"title":"Sayılarla","layout":"stats","stats":[
+        {"value":"%80","label":"kısa açıklama"},{"value":"3:1","label":"kısa açıklama"}]}
   ]
 }
 
@@ -103,8 +110,15 @@ Sunum (pptx) için ek kurallar:
 - "title" konuyu, "subtitle" kısa bir tanımı versin — kapak slaytı bunlardan üretilir.
 - "slides" mantıklı bir akış olsun: her ana konu öbeğinden önce bir bölüm ayracı ekle
   ("layout":"section", sadece "title" — bullets YOK).
-- İçerik slaytları "layout":"content" ve her birinde 3-6 KISA madde olsun (tam paragraf değil,
-  öz ifadeler). Slaytı metin duvarına çevirme.
+- ÖNEMLİ — slayt tiplerini ÇEŞİTLENDİR; sürekli madde listesi monoton durur. Şu tipleri uygun
+  yerlerde kullan:
+  · "content" → 3-6 kısa madde (öz ifadeler, tam paragraf değil)
+  · "two-col" → iki kavramı/yaklaşımı yan yana karşılaştırırken (columns + heading)
+  · "table"   → sınıflama, dozaj, ayırıcı tanı gibi yapısal veriyi gösterirken
+  · "callout" → bir slaytı tek bir anahtar mesaj/klinik inci ile vurgularken (text)
+  · "stats"   → prevalans, oran, sağkalım gibi sayısal bilgileri öne çıkarırken (stats)
+- Tipik bir sunumda en az 2-3 farklı tip kullan. Slaytı metin duvarına çevirme.
+- Kullanıcı belirli bir şey isterse (tablo, karşılaştırma, vurgu, istatistik...) o tipi kullan.
 - Kapsamlı sunum istenirse 12-20 slayt üret; en sonda bir "Özet / Anahtar Noktalar" slaytı ekle.
 - SADECE geçerli JSON döndür."""
 
@@ -226,7 +240,12 @@ PX_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 PX_INK   = RGBColor(0x1A, 0x24, 0x33)   # metin
 PX_DIM   = RGBColor(0x5A, 0x66, 0x78)   # soluk metin
 PX_SOFT  = RGBColor(0xDD, 0xE7, 0xF5)   # açık mavi
+PX_TINT  = RGBColor(0xEC, 0xF2, 0xFA)   # çok açık mavi (kart zemini)
 PX_FONT  = "Calibri"
+PX_SW    = Inches(13.333)               # 16:9 genişlik
+PX_SH    = Inches(7.5)                  # 16:9 yükseklik
+
+PX_LAYOUTS = ("section", "content", "two-col", "table", "callout", "stats")
 
 
 def _px_bg(slide, color):
@@ -240,6 +259,19 @@ def _px_rect(slide, x, y, w, h, color):
     shp.fill.solid()
     shp.fill.fore_color.rgb = color
     shp.line.fill.background()
+    shp.shadow.inherit = False
+    return shp
+
+
+def _px_round(slide, x, y, w, h, fill, line=None):
+    shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = fill
+    if line is None:
+        shp.line.fill.background()
+    else:
+        shp.line.color.rgb = line
+        shp.line.width = Pt(1)
     shp.shadow.inherit = False
     return shp
 
@@ -263,12 +295,35 @@ def _px_run(p, text, size, color, bold=False, italic=False):
     return r
 
 
+def _px_bullets(tf, items, size=18, gap=12):
+    for i, b in enumerate(items):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.space_after = Pt(gap)
+        p.line_spacing = 1.16
+        _px_run(p, "▪  ", size, PX_BLUE, bold=True)
+        _px_run(p, str(b), size, PX_INK)
+
+
+def _px_header(slide, s_title, deck_title, idx, total):
+    """Açık zeminli içerik slaytı iskeleti (üst çubuk, başlık, altbilgi, sayfa no)."""
+    _px_bg(slide, PX_LIGHT)
+    _px_rect(slide, 0, 0, PX_SW, Inches(0.16), PX_BLUE)
+    tf = _px_box(slide, Inches(0.85), Inches(0.5), Inches(11.6), Inches(1.0))
+    _px_run(tf.paragraphs[0], s_title, 28, PX_NAVY, bold=True)
+    _px_rect(slide, Inches(0.9), Inches(1.5), Inches(1.4), Inches(0.055), PX_BLUE)
+    _px_rect(slide, Inches(0.9), Inches(6.84), Inches(11.5), Inches(0.02), PX_SOFT)
+    tf = _px_box(slide, Inches(0.9), Inches(6.9), Inches(9.5), Inches(0.4))
+    _px_run(tf.paragraphs[0], deck_title + "  ·  kocderma.com", 10, PX_DIM)
+    tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
+    tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
+    _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_DIM)
+
+
 def build_pptx(spec, path):
     prs = Presentation()
-    prs.slide_width = Inches(13.333)   # 16:9
-    prs.slide_height = Inches(7.5)
+    prs.slide_width = PX_SW
+    prs.slide_height = PX_SH
     blank = prs.slide_layouts[6]
-    SW, SH = prs.slide_width, prs.slide_height
 
     title = str(spec.get("title") or "Sunum")
     subtitle = str(spec.get("subtitle") or "")
@@ -277,7 +332,7 @@ def build_pptx(spec, path):
     # ---- Kapak slaytı ----
     cover = prs.slides.add_slide(blank)
     _px_bg(cover, PX_BLUE)
-    _px_rect(cover, 0, 0, Inches(0.28), SH, PX_BLUED)
+    _px_rect(cover, 0, 0, Inches(0.28), PX_SH, PX_BLUED)
     tf = _px_box(cover, Inches(1.0), Inches(2.25), Inches(11.3), Inches(0.5))
     _px_run(tf.paragraphs[0], "BOLOGNIA DERMATOLOJİ  ·  kocderma.com", 14, PX_SOFT, bold=True)
     tf = _px_box(cover, Inches(1.0), Inches(2.75), Inches(11.4), Inches(2.3))
@@ -289,45 +344,123 @@ def build_pptx(spec, path):
 
     total = len(slides)
     section_no = 0
-    for idx, sl in enumerate(slides):
+    for idx0, sl in enumerate(slides):
+        idx = idx0 + 1
         s_title = str(sl.get("title", "") or "")
         bullets = sl.get("bullets", []) or []
         layout = str(sl.get("layout", "") or "").lower()
-        is_section = (layout == "section") or (not bullets and layout != "content")
+        if layout not in PX_LAYOUTS:
+            layout = "content" if bullets else "section"
 
         slide = prs.slides.add_slide(blank)
 
-        if is_section:
+        # ---- Bölüm ayracı ----
+        if layout == "section":
             section_no += 1
             _px_bg(slide, PX_NAVY)
-            _px_rect(slide, 0, 0, Inches(0.28), SH, PX_BLUE)
+            _px_rect(slide, 0, 0, Inches(0.28), PX_SH, PX_BLUE)
             tf = _px_box(slide, Inches(1.0), Inches(2.05), Inches(5), Inches(1.4))
             _px_run(tf.paragraphs[0], "%02d" % section_no, 54, PX_BLUE, bold=True)
             tf = _px_box(slide, Inches(1.0), Inches(3.05), Inches(11.3), Inches(2.2))
             _px_run(tf.paragraphs[0], s_title, 36, PX_WHITE, bold=True)
             _px_rect(slide, Inches(1.05), Inches(4.55), Inches(1.8), Inches(0.06), PX_BLUE)
-        else:
-            _px_bg(slide, PX_LIGHT)
-            _px_rect(slide, 0, 0, SW, Inches(0.16), PX_BLUE)
-            tf = _px_box(slide, Inches(0.85), Inches(0.55), Inches(11.6), Inches(1.05))
-            _px_run(tf.paragraphs[0], s_title, 30, PX_NAVY, bold=True)
-            _px_rect(slide, Inches(0.9), Inches(1.6), Inches(1.4), Inches(0.055), PX_BLUE)
-            tf = _px_box(slide, Inches(0.9), Inches(2.0), Inches(11.5), Inches(4.7))
-            for i, b in enumerate(bullets):
-                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-                p.space_after = Pt(12)
-                p.line_spacing = 1.18
-                _px_run(p, "▪  ", 18, PX_BLUE, bold=True)
-                _px_run(p, str(b), 18, PX_INK)
-            _px_rect(slide, Inches(0.9), Inches(6.84), Inches(11.5), Inches(0.02), PX_SOFT)
-            tf = _px_box(slide, Inches(0.9), Inches(6.9), Inches(9.5), Inches(0.4))
-            _px_run(tf.paragraphs[0], title + "  ·  kocderma.com", 10, PX_DIM)
+            tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
+            tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
+            _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_SOFT)
+            continue
 
-        # sayfa numarası (kapak hariç)
-        tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
-        tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
-        _px_run(tf.paragraphs[0], "%d / %d" % (idx + 1, total), 10,
-                PX_SOFT if is_section else PX_DIM)
+        # ---- İçerik tipli slaytlar (ortak iskelet) ----
+        _px_header(slide, s_title, title, idx, total)
+        cy = Inches(1.95)
+
+        # ---- İki sütun / karşılaştırma ----
+        if layout == "two-col":
+            cols = sl.get("columns", []) or []
+            if not cols and bullets:
+                half = (len(bullets) + 1) // 2
+                cols = [{"bullets": bullets[:half]}, {"bullets": bullets[half:]}]
+            xs = [Inches(0.9), Inches(7.0)]
+            cw = Inches(5.45)
+            for ci, col in enumerate(cols[:2]):
+                yy = cy
+                heading = str(col.get("heading", "") or "")
+                if heading:
+                    _px_rect(slide, xs[ci], yy, cw, Inches(0.5), PX_BLUE)
+                    htf = _px_box(slide, xs[ci] + Inches(0.15), yy, cw - Inches(0.3),
+                                  Inches(0.5), anchor=MSO_ANCHOR.MIDDLE)
+                    _px_run(htf.paragraphs[0], heading, 15, PX_WHITE, bold=True)
+                    yy = yy + Inches(0.7)
+                btf = _px_box(slide, xs[ci], yy, cw, Inches(4.4))
+                _px_bullets(btf, col.get("bullets", []) or [], size=16, gap=9)
+
+        # ---- Tablo ----
+        elif layout == "table":
+            headers = sl.get("headers", []) or []
+            rows = sl.get("rows", []) or []
+            data = ([headers] if headers else []) + [list(r) for r in rows]
+            data = [r for r in data if r]
+            if data:
+                ncol = max(len(r) for r in data)
+                nrow = len(data)
+                th = min(Inches(0.55) * nrow, Inches(4.6))
+                gt = slide.shapes.add_table(nrow, ncol, Inches(0.9), cy,
+                                            Inches(11.5), th).table
+                for ri, row in enumerate(data):
+                    is_h = bool(headers) and ri == 0
+                    for ci in range(ncol):
+                        cell = gt.cell(ri, ci)
+                        cell.text = ""
+                        val = row[ci] if ci < len(row) else ""
+                        _px_run(cell.text_frame.paragraphs[0], str(val), 13,
+                                PX_WHITE if is_h else PX_INK, bold=is_h)
+                        cell.fill.solid()
+                        if is_h:
+                            cell.fill.fore_color.rgb = PX_BLUE
+                        else:
+                            cell.fill.fore_color.rgb = PX_TINT if ri % 2 else PX_WHITE
+                        cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+
+        # ---- Vurgu kutusu (callout) ----
+        elif layout == "callout":
+            text = str(sl.get("text", "") or (bullets[0] if bullets else ""))
+            _px_round(slide, Inches(1.4), Inches(2.7), Inches(10.5), Inches(2.3), PX_TINT)
+            _px_rect(slide, Inches(1.4), Inches(2.78), Inches(0.12), Inches(2.14), PX_BLUE)
+            tf = _px_box(slide, Inches(2.0), Inches(2.7), Inches(9.4), Inches(2.3),
+                         anchor=MSO_ANCHOR.MIDDLE)
+            _px_run(tf.paragraphs[0], text, 23, PX_NAVY, bold=True)
+            extra = list(bullets)
+            if not sl.get("text") and extra:
+                extra = extra[1:]
+            if extra:
+                etf = _px_box(slide, Inches(1.5), Inches(5.3), Inches(10.3), Inches(1.4))
+                _px_bullets(etf, extra, size=15, gap=7)
+
+        # ---- İstatistik kartları ----
+        elif layout == "stats":
+            stats = (sl.get("stats", []) or [])[:4]
+            n = len(stats) or 1
+            gap = Inches(0.3)
+            cardw = (Inches(11.5) - gap * (n - 1)) // n
+            for si, st in enumerate(stats):
+                x = Inches(0.9) + (cardw + gap) * si
+                _px_round(slide, x, Inches(2.55), cardw, Inches(2.6), PX_WHITE, line=PX_SOFT)
+                _px_rect(slide, x, Inches(2.55), cardw, Inches(0.12), PX_BLUE)
+                vtf = _px_box(slide, x, Inches(3.0), cardw, Inches(1.2),
+                              anchor=MSO_ANCHOR.MIDDLE)
+                vtf.paragraphs[0].alignment = PP_ALIGN.CENTER
+                _px_run(vtf.paragraphs[0], str(st.get("value", "")), 38, PX_BLUE, bold=True)
+                ltf = _px_box(slide, x + Inches(0.2), Inches(4.15), cardw - Inches(0.4),
+                              Inches(0.9))
+                ltf.paragraphs[0].alignment = PP_ALIGN.CENTER
+                _px_run(ltf.paragraphs[0], str(st.get("label", "")), 14, PX_DIM)
+            if bullets:
+                btf = _px_box(slide, Inches(0.9), Inches(5.4), Inches(11.5), Inches(1.3))
+                _px_bullets(btf, bullets, size=15, gap=7)
+
+        # ---- Klasik madde slaytı ----
+        else:
+            btf = _px_box(slide, Inches(0.9), cy, Inches(11.5), Inches(4.7))
+            _px_bullets(btf, bullets, size=18, gap=12)
 
     prs.save(path)
 
