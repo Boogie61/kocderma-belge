@@ -40,6 +40,19 @@ from reportlab.pdfbase.ttfonts import TTFont
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MODEL = "claude-haiku-4-5-20251001"        # yedek (JSON) yontemi icin
 SKILL_MODEL = "claude-haiku-4-5-20251001"  # resmi Skill'ler icin (ucuz). Kalite icin "claude-sonnet-4-6" yap.
+
+# Site'deki model secici (Haiku/Sonnet/Opus) bu anahtarlari gonderir.
+# OPUS kimligi "model not found" hatasi verirse opus satirini duzelt
+# (gecerli kimligi docs.anthropic.com/.../models adresinden bulabilirsin).
+MODEL_MAP = {
+    "haiku":  "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-6",
+    "opus":   "claude-opus-4-7",
+}
+
+
+def resolve_model(key):
+    return MODEL_MAP.get((key or "haiku").lower(), MODEL_MAP["haiku"])
 FILES_API = "https://api.anthropic.com/v1/files"
 SKILL_BETAS = "code-execution-2025-08-25,skills-2025-10-02,files-api-2025-04-14"
 SKILLS_LIST = [{"type": "anthropic", "skill_id": _s, "version": "latest"} for _s in ["pptx", "docx", "xlsx", "pdf"]]
@@ -139,10 +152,11 @@ DOC_SKILL_SYSTEM = (
 
 class DocReq(BaseModel):
     messages: list
+    model: str = "haiku"   # site'den gelir: haiku | sonnet | opus
 
 
-def call_claude(messages):
-    body = {"model": MODEL, "max_tokens": 8000, "system": SYSTEM, "messages": messages}
+def call_claude(messages, model_id=None):
+    body = {"model": model_id or MODEL, "max_tokens": 8000, "system": SYSTEM, "messages": messages}
     last = "Claude API hatasi"
     for attempt in range(4):
         try:
@@ -564,14 +578,14 @@ def _download_anthropic_file(fid):
     return name, cr.content
 
 
-def skills_generate(messages):
+def skills_generate(messages, model_id=None):
     """Anthropic resmi Skill'leri (code execution) ile gercek dosya uretir."""
     container = {"skills": SKILLS_LIST}
     msgs = list(messages)
     data = {}
     for _ in range(8):
         body = {
-            "model": SKILL_MODEL,
+            "model": model_id or SKILL_MODEL,
             "max_tokens": 12000,
             "system": DOC_SKILL_SYSTEM,
             "messages": msgs,
@@ -622,10 +636,13 @@ def make_doc(req: DocReq):
     if not req.messages:
         return {"reply": "Bos istek.", "files": []}
 
+    model_id = resolve_model(req.model)
+    print("[make_doc] istek modeli:", req.model, "->", model_id, flush=True)
+
     # 1) Resmi Skill'lerle uret (en iyi kalite)
     skill_err = ""
     try:
-        s_reply, s_files = skills_generate(req.messages)
+        s_reply, s_files = skills_generate(req.messages, model_id)
         if s_files:
             print("[make_doc] Skills yolu BASARILI ->", len(s_files), "dosya", flush=True)
             return {"reply": s_reply or "Belge hazir.", "files": s_files}
@@ -636,7 +653,7 @@ def make_doc(req: DocReq):
 
     # 2) Yedek: JSON taslagi + python ile uret
     try:
-        text = call_claude(req.messages)
+        text = call_claude(req.messages, model_id)
         spec = parse_spec(text)
     except Exception as e:
         return {"reply": "Belge olusturulamadi (skill: " + skill_err + " / yedek: " + str(e) + ")", "files": []}
