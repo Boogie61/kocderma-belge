@@ -11,6 +11,7 @@ import os
 import re
 import json
 import uuid
+import time
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -98,25 +99,37 @@ class DocReq(BaseModel):
 
 def call_claude(messages):
     body = {"model": MODEL, "max_tokens": 8192, "system": SYSTEM, "messages": messages}
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json=body,
-        timeout=120,
-    )
-    if r.status_code != 200:
+    last = "Claude API hatasi"
+    for attempt in range(4):
         try:
-            msg = r.json().get("error", {}).get("message", "")
+            r = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=body,
+                timeout=90,
+            )
+        except Exception as e:
+            last = "baglanti/zaman asimi: " + str(e)
+            time.sleep(2 * (attempt + 1))
+            continue
+        if r.status_code == 200:
+            data = r.json()
+            parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+            return "\n".join(parts)
+        if r.status_code in (429, 529, 503):
+            last = "Sunucu yogun (" + str(r.status_code) + ")"
+            time.sleep(2 * (attempt + 1))
+            continue
+        try:
+            last = r.json().get("error", {}).get("message", "") or ("hata " + str(r.status_code))
         except Exception:
-            msg = r.text[:200]
-        raise HTTPException(status_code=502, detail="Claude API hatasi: " + (msg or str(r.status_code)))
-    data = r.json()
-    parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
-    return "\n".join(parts)
+            last = "hata " + str(r.status_code)
+        break
+    raise RuntimeError(last)
 
 
 def parse_spec(text):
@@ -268,15 +281,15 @@ def health():
 @app.post("/doc")
 def make_doc(req: DocReq):
     if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY ayarli degil")
+        return {"reply": "Sunucuda API anahtari ayarli degil.", "files": []}
     if not req.messages:
-        raise HTTPException(status_code=400, detail="messages bos")
+        return {"reply": "Bos istek.", "files": []}
 
-    text = call_claude(req.messages)
     try:
+        text = call_claude(req.messages)
         spec = parse_spec(text)
-    except Exception:
-        return {"reply": "Belge taslagi olusturulamadi. Istegini biraz daha acik belirt.", "files": []}
+    except Exception as e:
+        return {"reply": "Belge olusturulamadi: " + str(e), "files": []}
 
     kind = str(spec.get("kind") or "docx").lower()
     if kind not in BUILDERS:
