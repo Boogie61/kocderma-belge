@@ -152,7 +152,8 @@ DOC_SKILL_SYSTEM = (
 
 class DocReq(BaseModel):
     messages: list
-    model: str = "haiku"   # site'den gelir: haiku | sonnet | opus
+    model: str = "haiku"    # site'den gelir: haiku | sonnet | opus
+    theme: str = "klinik"   # sunum teması: klinik | koyu | mor | sade
 
 
 def call_claude(messages, model_id=None):
@@ -259,21 +260,60 @@ def build_xlsx(spec, path):
     wb.save(path)
 
 
-# ---- pptx klinik-mavi tema ----
-PX_NAVY  = RGBColor(0x0E, 0x1A, 0x2B)   # koyu lacivert
-PX_BLUE  = RGBColor(0x1F, 0x5F, 0xB3)   # klinik mavi (vurgu)
-PX_BLUED = RGBColor(0x14, 0x3F, 0x7A)   # koyu mavi
-PX_LIGHT = RGBColor(0xF7, 0xF8, 0xFA)   # açık zemin
-PX_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-PX_INK   = RGBColor(0x1A, 0x24, 0x33)   # metin
-PX_DIM   = RGBColor(0x5A, 0x66, 0x78)   # soluk metin
-PX_SOFT  = RGBColor(0xDD, 0xE7, 0xF5)   # açık mavi
-PX_TINT  = RGBColor(0xEC, 0xF2, 0xFA)   # çok açık mavi (kart zemini)
-PX_FONT  = "Calibri"
-PX_SW    = Inches(13.333)               # 16:9 genişlik
-PX_SH    = Inches(7.5)                  # 16:9 yükseklik
-
+# ---- pptx temaları (seçilebilir) ----
+PX_FONT = "Calibri"
+PX_SW = Inches(13.333)   # 16:9 genişlik
+PX_SH = Inches(7.5)      # 16:9 yükseklik
 PX_LAYOUTS = ("section", "content", "two-col", "table", "callout", "stats")
+
+# Site'deki tema seçici bu anahtarları gönderir. Her tema bir renk paleti.
+PX_THEMES = {
+    "klinik": {
+        "label": "Klinik Mavi",
+        "cover_bg": (0x1F, 0x5F, 0xB3), "cover_edge": (0x14, 0x3F, 0x7A), "cover_sub": (0xDD, 0xE7, 0xF5),
+        "section_bg": (0x0E, 0x1A, 0x2B), "accent": (0x1F, 0x5F, 0xB3),
+        "content_bg": (0xF7, 0xF8, 0xFA), "panel": (0xFF, 0xFF, 0xFF),
+        "title": (0x0E, 0x1A, 0x2B), "ink": (0x1A, 0x24, 0x33), "dim": (0x5A, 0x66, 0x78),
+        "soft": (0xDD, 0xE7, 0xF5), "tint": (0xEC, 0xF2, 0xFA),
+        "on_dark": (0xFF, 0xFF, 0xFF), "on_accent": (0xFF, 0xFF, 0xFF),
+    },
+    "koyu": {
+        "label": "Koyu",
+        "cover_bg": (0x12, 0x1A, 0x2E), "cover_edge": (0x6B, 0xA6, 0xE8), "cover_sub": (0x9F, 0xB2, 0xCE),
+        "section_bg": (0x0B, 0x10, 0x1F), "accent": (0x6B, 0xA6, 0xE8),
+        "content_bg": (0x16, 0x1E, 0x2F), "panel": (0x1F, 0x2A, 0x40),
+        "title": (0xEC, 0xF1, 0xF8), "ink": (0xCD, 0xD6, 0xE3), "dim": (0x8A, 0x97, 0xAD),
+        "soft": (0x2C, 0x37, 0x4E), "tint": (0x24, 0x31, 0x50),
+        "on_dark": (0xFF, 0xFF, 0xFF), "on_accent": (0x0B, 0x14, 0x24),
+    },
+    "mor": {
+        "label": "Modern Mor",
+        "cover_bg": (0x6D, 0x28, 0xD9), "cover_edge": (0x4C, 0x1D, 0x95), "cover_sub": (0xDD, 0xD3, 0xF6),
+        "section_bg": (0x1E, 0x14, 0x33), "accent": (0x7C, 0x3A, 0xED),
+        "content_bg": (0xFA, 0xF8, 0xFD), "panel": (0xFF, 0xFF, 0xFF),
+        "title": (0x2E, 0x10, 0x65), "ink": (0x26, 0x20, 0x38), "dim": (0x6B, 0x63, 0x82),
+        "soft": (0xE7, 0xDF, 0xF7), "tint": (0xF2, 0xEC, 0xFC),
+        "on_dark": (0xFF, 0xFF, 0xFF), "on_accent": (0xFF, 0xFF, 0xFF),
+    },
+    "sade": {
+        "label": "Sade",
+        "cover_bg": (0x1A, 0x1A, 0x1A), "cover_edge": (0xC2, 0x41, 0x0C), "cover_sub": (0xBF, 0xBF, 0xBF),
+        "section_bg": (0x26, 0x26, 0x26), "accent": (0xC2, 0x41, 0x0C),
+        "content_bg": (0xFF, 0xFF, 0xFF), "panel": (0xFF, 0xFF, 0xFF),
+        "title": (0x14, 0x14, 0x14), "ink": (0x2E, 0x2E, 0x2E), "dim": (0x8A, 0x8A, 0x8A),
+        "soft": (0xE5, 0xE5, 0xE5), "tint": (0xF5, 0xF4, 0xF2),
+        "on_dark": (0xFF, 0xFF, 0xFF), "on_accent": (0xFF, 0xFF, 0xFF),
+    },
+}
+
+
+def _rgb(t):
+    return RGBColor(t[0], t[1], t[2])
+
+
+def get_theme(key):
+    src = PX_THEMES.get((key or "klinik").lower(), PX_THEMES["klinik"])
+    return {k: (_rgb(v) if isinstance(v, tuple) else v) for k, v in src.items()}
 
 
 def _px_bg(slide, color):
@@ -323,31 +363,32 @@ def _px_run(p, text, size, color, bold=False, italic=False):
     return r
 
 
-def _px_bullets(tf, items, size=18, gap=12):
+def _px_bullets(tf, items, T, size=18, gap=12):
     for i, b in enumerate(items):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.space_after = Pt(gap)
         p.line_spacing = 1.16
-        _px_run(p, "▪  ", size, PX_BLUE, bold=True)
-        _px_run(p, str(b), size, PX_INK)
+        _px_run(p, "▪  ", size, T["accent"], bold=True)
+        _px_run(p, str(b), size, T["ink"])
 
 
-def _px_header(slide, s_title, deck_title, idx, total):
-    """Açık zeminli içerik slaytı iskeleti (üst çubuk, başlık, altbilgi, sayfa no)."""
-    _px_bg(slide, PX_LIGHT)
-    _px_rect(slide, 0, 0, PX_SW, Inches(0.16), PX_BLUE)
+def _px_header(slide, s_title, deck_title, idx, total, T):
+    """İçerik slaytı iskeleti (üst çubuk, başlık, altbilgi, sayfa no)."""
+    _px_bg(slide, T["content_bg"])
+    _px_rect(slide, 0, 0, PX_SW, Inches(0.16), T["accent"])
     tf = _px_box(slide, Inches(0.85), Inches(0.5), Inches(11.6), Inches(1.0))
-    _px_run(tf.paragraphs[0], s_title, 28, PX_NAVY, bold=True)
-    _px_rect(slide, Inches(0.9), Inches(1.5), Inches(1.4), Inches(0.055), PX_BLUE)
-    _px_rect(slide, Inches(0.9), Inches(6.84), Inches(11.5), Inches(0.02), PX_SOFT)
+    _px_run(tf.paragraphs[0], s_title, 28, T["title"], bold=True)
+    _px_rect(slide, Inches(0.9), Inches(1.5), Inches(1.4), Inches(0.055), T["accent"])
+    _px_rect(slide, Inches(0.9), Inches(6.84), Inches(11.5), Inches(0.02), T["soft"])
     tf = _px_box(slide, Inches(0.9), Inches(6.9), Inches(9.5), Inches(0.4))
-    _px_run(tf.paragraphs[0], deck_title + "  ·  kocderma.com", 10, PX_DIM)
+    _px_run(tf.paragraphs[0], deck_title + "  ·  kocderma.com", 10, T["dim"])
     tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
     tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
-    _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_DIM)
+    _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, T["dim"])
 
 
 def build_pptx(spec, path):
+    T = get_theme(spec.get("_theme"))
     prs = Presentation()
     prs.slide_width = PX_SW
     prs.slide_height = PX_SH
@@ -359,16 +400,16 @@ def build_pptx(spec, path):
 
     # ---- Kapak slaytı ----
     cover = prs.slides.add_slide(blank)
-    _px_bg(cover, PX_BLUE)
-    _px_rect(cover, 0, 0, Inches(0.28), PX_SH, PX_BLUED)
+    _px_bg(cover, T["cover_bg"])
+    _px_rect(cover, 0, 0, Inches(0.28), PX_SH, T["cover_edge"])
     tf = _px_box(cover, Inches(1.0), Inches(2.25), Inches(11.3), Inches(0.5))
-    _px_run(tf.paragraphs[0], "BOLOGNIA DERMATOLOJİ  ·  kocderma.com", 14, PX_SOFT, bold=True)
+    _px_run(tf.paragraphs[0], "BOLOGNIA DERMATOLOJİ  ·  kocderma.com", 14, T["cover_sub"], bold=True)
     tf = _px_box(cover, Inches(1.0), Inches(2.75), Inches(11.4), Inches(2.3))
-    _px_run(tf.paragraphs[0], title, 44, PX_WHITE, bold=True)
-    _px_rect(cover, Inches(1.05), Inches(4.95), Inches(2.2), Inches(0.06), PX_WHITE)
+    _px_run(tf.paragraphs[0], title, 44, T["on_dark"], bold=True)
+    _px_rect(cover, Inches(1.05), Inches(4.95), Inches(2.2), Inches(0.06), T["on_dark"])
     if subtitle:
         tf = _px_box(cover, Inches(1.0), Inches(5.2), Inches(11.3), Inches(1.4))
-        _px_run(tf.paragraphs[0], subtitle, 19, PX_SOFT)
+        _px_run(tf.paragraphs[0], subtitle, 19, T["cover_sub"])
 
     total = len(slides)
     section_no = 0
@@ -385,20 +426,20 @@ def build_pptx(spec, path):
         # ---- Bölüm ayracı ----
         if layout == "section":
             section_no += 1
-            _px_bg(slide, PX_NAVY)
-            _px_rect(slide, 0, 0, Inches(0.28), PX_SH, PX_BLUE)
+            _px_bg(slide, T["section_bg"])
+            _px_rect(slide, 0, 0, Inches(0.28), PX_SH, T["accent"])
             tf = _px_box(slide, Inches(1.0), Inches(2.05), Inches(5), Inches(1.4))
-            _px_run(tf.paragraphs[0], "%02d" % section_no, 54, PX_BLUE, bold=True)
+            _px_run(tf.paragraphs[0], "%02d" % section_no, 54, T["accent"], bold=True)
             tf = _px_box(slide, Inches(1.0), Inches(3.05), Inches(11.3), Inches(2.2))
-            _px_run(tf.paragraphs[0], s_title, 36, PX_WHITE, bold=True)
-            _px_rect(slide, Inches(1.05), Inches(4.55), Inches(1.8), Inches(0.06), PX_BLUE)
+            _px_run(tf.paragraphs[0], s_title, 36, T["on_dark"], bold=True)
+            _px_rect(slide, Inches(1.05), Inches(4.55), Inches(1.8), Inches(0.06), T["accent"])
             tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
             tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
-            _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_SOFT)
+            _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, T["cover_sub"])
             continue
 
         # ---- İçerik tipli slaytlar (ortak iskelet) ----
-        _px_header(slide, s_title, title, idx, total)
+        _px_header(slide, s_title, title, idx, total, T)
         cy = Inches(1.95)
 
         # ---- İki sütun / karşılaştırma ----
@@ -413,13 +454,13 @@ def build_pptx(spec, path):
                 yy = cy
                 heading = str(col.get("heading", "") or "")
                 if heading:
-                    _px_rect(slide, xs[ci], yy, cw, Inches(0.5), PX_BLUE)
+                    _px_rect(slide, xs[ci], yy, cw, Inches(0.5), T["accent"])
                     htf = _px_box(slide, xs[ci] + Inches(0.15), yy, cw - Inches(0.3),
                                   Inches(0.5), anchor=MSO_ANCHOR.MIDDLE)
-                    _px_run(htf.paragraphs[0], heading, 15, PX_WHITE, bold=True)
+                    _px_run(htf.paragraphs[0], heading, 15, T["on_accent"], bold=True)
                     yy = yy + Inches(0.7)
                 btf = _px_box(slide, xs[ci], yy, cw, Inches(4.4))
-                _px_bullets(btf, col.get("bullets", []) or [], size=16, gap=9)
+                _px_bullets(btf, col.get("bullets", []) or [], T, size=16, gap=9)
 
         # ---- Tablo ----
         elif layout == "table":
@@ -440,28 +481,28 @@ def build_pptx(spec, path):
                         cell.text = ""
                         val = row[ci] if ci < len(row) else ""
                         _px_run(cell.text_frame.paragraphs[0], str(val), 13,
-                                PX_WHITE if is_h else PX_INK, bold=is_h)
+                                T["on_accent"] if is_h else T["ink"], bold=is_h)
                         cell.fill.solid()
                         if is_h:
-                            cell.fill.fore_color.rgb = PX_BLUE
+                            cell.fill.fore_color.rgb = T["accent"]
                         else:
-                            cell.fill.fore_color.rgb = PX_TINT if ri % 2 else PX_WHITE
+                            cell.fill.fore_color.rgb = T["tint"] if ri % 2 else T["panel"]
                         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
 
         # ---- Vurgu kutusu (callout) ----
         elif layout == "callout":
             text = str(sl.get("text", "") or (bullets[0] if bullets else ""))
-            _px_round(slide, Inches(1.4), Inches(2.7), Inches(10.5), Inches(2.3), PX_TINT)
-            _px_rect(slide, Inches(1.4), Inches(2.78), Inches(0.12), Inches(2.14), PX_BLUE)
+            _px_round(slide, Inches(1.4), Inches(2.7), Inches(10.5), Inches(2.3), T["tint"])
+            _px_rect(slide, Inches(1.4), Inches(2.78), Inches(0.12), Inches(2.14), T["accent"])
             tf = _px_box(slide, Inches(2.0), Inches(2.7), Inches(9.4), Inches(2.3),
                          anchor=MSO_ANCHOR.MIDDLE)
-            _px_run(tf.paragraphs[0], text, 23, PX_NAVY, bold=True)
+            _px_run(tf.paragraphs[0], text, 23, T["title"], bold=True)
             extra = list(bullets)
             if not sl.get("text") and extra:
                 extra = extra[1:]
             if extra:
                 etf = _px_box(slide, Inches(1.5), Inches(5.3), Inches(10.3), Inches(1.4))
-                _px_bullets(etf, extra, size=15, gap=7)
+                _px_bullets(etf, extra, T, size=15, gap=7)
 
         # ---- İstatistik kartları ----
         elif layout == "stats":
@@ -471,24 +512,24 @@ def build_pptx(spec, path):
             cardw = (Inches(11.5) - gap * (n - 1)) // n
             for si, st in enumerate(stats):
                 x = Inches(0.9) + (cardw + gap) * si
-                _px_round(slide, x, Inches(2.55), cardw, Inches(2.6), PX_WHITE, line=PX_SOFT)
-                _px_rect(slide, x, Inches(2.55), cardw, Inches(0.12), PX_BLUE)
+                _px_round(slide, x, Inches(2.55), cardw, Inches(2.6), T["panel"], line=T["soft"])
+                _px_rect(slide, x, Inches(2.55), cardw, Inches(0.12), T["accent"])
                 vtf = _px_box(slide, x, Inches(3.0), cardw, Inches(1.2),
                               anchor=MSO_ANCHOR.MIDDLE)
                 vtf.paragraphs[0].alignment = PP_ALIGN.CENTER
-                _px_run(vtf.paragraphs[0], str(st.get("value", "")), 38, PX_BLUE, bold=True)
+                _px_run(vtf.paragraphs[0], str(st.get("value", "")), 38, T["accent"], bold=True)
                 ltf = _px_box(slide, x + Inches(0.2), Inches(4.15), cardw - Inches(0.4),
                               Inches(0.9))
                 ltf.paragraphs[0].alignment = PP_ALIGN.CENTER
-                _px_run(ltf.paragraphs[0], str(st.get("label", "")), 14, PX_DIM)
+                _px_run(ltf.paragraphs[0], str(st.get("label", "")), 14, T["dim"])
             if bullets:
                 btf = _px_box(slide, Inches(0.9), Inches(5.4), Inches(11.5), Inches(1.3))
-                _px_bullets(btf, bullets, size=15, gap=7)
+                _px_bullets(btf, bullets, T, size=15, gap=7)
 
         # ---- Klasik madde slaytı ----
         else:
             btf = _px_box(slide, Inches(0.9), cy, Inches(11.5), Inches(4.7))
-            _px_bullets(btf, bullets, size=18, gap=12)
+            _px_bullets(btf, bullets, T, size=18, gap=12)
 
     prs.save(path)
 
@@ -657,6 +698,9 @@ def make_doc(req: DocReq):
         spec = parse_spec(text)
     except Exception as e:
         return {"reply": "Belge olusturulamadi (skill: " + skill_err + " / yedek: " + str(e) + ")", "files": []}
+
+    # Seçilen sunum teması (sadece pptx build_pptx kullanır)
+    spec["_theme"] = (req.theme or "klinik").lower()
 
     kind = str(spec.get("kind") or "docx").lower()
     if kind not in BUILDERS:
