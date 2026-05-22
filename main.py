@@ -1,4 +1,3 @@
-
 # ============================================================
 #  kocderma.com — Belge Üretim Sunucusu (FastAPI)
 #  Claude içeriği JSON şema olarak üretir; bu sunucu gerçek
@@ -7,20 +6,20 @@
 #
 #  Ortam değişkeni: ANTHROPIC_API_KEY (Render'da Secret olarak ekle)
 # ============================================================
- 
+
 import os
 import re
 import json
 import uuid
 import time
 import base64
- 
+
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
- 
+
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
@@ -37,21 +36,17 @@ from reportlab.platypus import (
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
- 
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-haiku-4-5-20251001"        # yedek (JSON) yontemi icin
-SKILL_MODEL = "claude-sonnet-4-6"          # resmi Skill'ler icin (kalite)
-FILES_API = "https://api.anthropic.com/v1/files"
-SKILL_BETAS = "code-execution-2025-08-25,skills-2025-10-02,files-api-2025-04-14"
-SKILLS_LIST = [{"type": "anthropic", "skill_id": _s, "version": "latest"} for _s in ["pptx", "docx", "xlsx", "pdf"]]
+MODEL = "claude-sonnet-4-6"
 FILES_DIR = os.environ.get("FILES_DIR", "/tmp/genfiles")
 os.makedirs(FILES_DIR, exist_ok=True)
- 
+
 ALLOWED_ORIGINS = [
     "https://kocderma.com",
     "https://www.kocderma.com",
 ]
- 
+
 # Türkçe karakterler için Unicode font (PDF). Linux'ta DejaVu genelde kuruludur.
 PDF_FONT = "Helvetica"
 for _fp in [
@@ -66,7 +61,7 @@ for _fp in [
             break
         except Exception:
             pass
- 
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -74,10 +69,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
+
 SYSTEM = """Sen bir belge üreticisisin. Kullanıcının isteğine göre TEK BİR JSON nesnesi üret.
 Yanıtın SADECE JSON olsun: açıklama yazma, kod bloğu işareti (```) kullanma.
- 
+
 Şema:
 {
   "kind": "docx" | "xlsx" | "pptx" | "pdf",
@@ -105,13 +100,13 @@ Yanıtın SADECE JSON olsun: açıklama yazma, kod bloğu işareti (```) kullanm
         {"value":"%80","label":"kısa açıklama"},{"value":"3:1","label":"kısa açıklama"}]}
   ]
 }
- 
+
 Kurallar:
 - Kullanıcı format belirttiyse (Word=docx, Excel=xlsx, sunum/PowerPoint=pptx, PDF=pdf) onu kullan; belirtmediyse içeriğe en uygun olanı seç.
 - docx ve pdf için "blocks" doldur. xlsx için "sheets". pptx için "title" + "subtitle" + "slides".
 - İçeriği Türkçe, dolu ve dermatoloji eğitimine uygun hazırla; önemli İngilizce terimleri parantez içinde ekle.
 - Bu bir eğitim aracıdır; tanı koyma, kişiye özel tıbbi tavsiye verme.
- 
+
 Sunum (pptx) için ek kurallar:
 - "title" konuyu, "subtitle" kısa bir tanımı versin — kapak slaytı bunlardan üretilir.
 - "slides" mantıklı bir akış olsun: her ana konu öbeğinden önce bir bölüm ayracı ekle
@@ -127,23 +122,14 @@ Sunum (pptx) için ek kurallar:
 - Kullanıcı belirli bir şey isterse (tablo, karşılaştırma, vurgu, istatistik...) o tipi kullan.
 - Kapsamlı sunum istenirse 12-20 slayt üret; en sonda bir "Özet / Anahtar Noktalar" slaytı ekle.
 - SADECE geçerli JSON döndür."""
- 
- 
-DOC_SKILL_SYSTEM = (
-    "Sen kocderma.com icin bir belge asistanisin. Kullanicinin istedigi belgeyi UYGUN Skill ile "
-    "olustur: PowerPoint (pptx), Word (docx), Excel (xlsx) veya PDF. Profesyonel, tasarimli ve dolu "
-    "bir cikti uret. Icerik Turkce ve dermatoloji egitimine uygun olsun; onemli Ingilizce terimleri "
-    "parantez icinde ekle. Asil icerigi DOSYAYA koy; sohbet yanitin kisa olsun. Bu bir egitim aracidir; "
-    "tani koyma, kisiye ozel tibbi tavsiye verme."
-)
- 
- 
+
+
 class DocReq(BaseModel):
     messages: list
- 
- 
+
+
 def call_claude(messages):
-    body = {"model": MODEL, "max_tokens": 8000, "system": SYSTEM, "messages": messages}
+    body = {"model": MODEL, "max_tokens": 12000, "system": SYSTEM, "messages": messages}
     last = "Claude API hatasi"
     for attempt in range(4):
         try:
@@ -175,8 +161,8 @@ def call_claude(messages):
             last = "hata " + str(r.status_code)
         break
     raise RuntimeError(last)
- 
- 
+
+
 def parse_spec(text):
     t = (text or "").strip()
     t = re.sub(r"^```[a-zA-Z]*", "", t).strip()
@@ -185,8 +171,8 @@ def parse_spec(text):
     if start >= 0 and end > start:
         t = t[start:end + 1]
     return json.loads(t)
- 
- 
+
+
 def build_docx(spec, path):
     doc = Document()
     if spec.get("title"):
@@ -225,8 +211,8 @@ def build_docx(spec, path):
                         if i < ncol:
                             cells[i].text = str(c)
     doc.save(path)
- 
- 
+
+
 def build_xlsx(spec, path):
     wb = Workbook()
     sheets = spec.get("sheets")
@@ -244,8 +230,8 @@ def build_xlsx(spec, path):
         for row in rows:
             ws.append([str(c) for c in row])
     wb.save(path)
- 
- 
+
+
 # ---- pptx klinik-mavi tema ----
 PX_NAVY  = RGBColor(0x0E, 0x1A, 0x2B)   # koyu lacivert
 PX_BLUE  = RGBColor(0x1F, 0x5F, 0xB3)   # klinik mavi (vurgu)
@@ -259,16 +245,16 @@ PX_TINT  = RGBColor(0xEC, 0xF2, 0xFA)   # çok açık mavi (kart zemini)
 PX_FONT  = "Calibri"
 PX_SW    = Inches(13.333)               # 16:9 genişlik
 PX_SH    = Inches(7.5)                  # 16:9 yükseklik
- 
+
 PX_LAYOUTS = ("section", "content", "two-col", "table", "callout", "stats")
- 
- 
+
+
 def _px_bg(slide, color):
     fill = slide.background.fill
     fill.solid()
     fill.fore_color.rgb = color
- 
- 
+
+
 def _px_rect(slide, x, y, w, h, color):
     shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
     shp.fill.solid()
@@ -276,8 +262,8 @@ def _px_rect(slide, x, y, w, h, color):
     shp.line.fill.background()
     shp.shadow.inherit = False
     return shp
- 
- 
+
+
 def _px_round(slide, x, y, w, h, fill, line=None):
     shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
     shp.fill.solid()
@@ -289,16 +275,16 @@ def _px_round(slide, x, y, w, h, fill, line=None):
         shp.line.width = Pt(1)
     shp.shadow.inherit = False
     return shp
- 
- 
+
+
 def _px_box(slide, x, y, w, h, anchor=MSO_ANCHOR.TOP):
     tb = slide.shapes.add_textbox(x, y, w, h)
     tf = tb.text_frame
     tf.word_wrap = True
     tf.vertical_anchor = anchor
     return tf
- 
- 
+
+
 def _px_run(p, text, size, color, bold=False, italic=False):
     r = p.add_run()
     r.text = text
@@ -308,8 +294,8 @@ def _px_run(p, text, size, color, bold=False, italic=False):
     r.font.italic = italic
     r.font.name = PX_FONT
     return r
- 
- 
+
+
 def _px_bullets(tf, items, size=18, gap=12):
     for i, b in enumerate(items):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
@@ -317,8 +303,8 @@ def _px_bullets(tf, items, size=18, gap=12):
         p.line_spacing = 1.16
         _px_run(p, "▪  ", size, PX_BLUE, bold=True)
         _px_run(p, str(b), size, PX_INK)
- 
- 
+
+
 def _px_header(slide, s_title, deck_title, idx, total):
     """Açık zeminli içerik slaytı iskeleti (üst çubuk, başlık, altbilgi, sayfa no)."""
     _px_bg(slide, PX_LIGHT)
@@ -332,18 +318,18 @@ def _px_header(slide, s_title, deck_title, idx, total):
     tf = _px_box(slide, Inches(11.75), Inches(6.86), Inches(1.2), Inches(0.4))
     tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
     _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_DIM)
- 
- 
+
+
 def build_pptx(spec, path):
     prs = Presentation()
     prs.slide_width = PX_SW
     prs.slide_height = PX_SH
     blank = prs.slide_layouts[6]
- 
+
     title = str(spec.get("title") or "Sunum")
     subtitle = str(spec.get("subtitle") or "")
     slides = spec.get("slides", []) or []
- 
+
     # ---- Kapak slaytı ----
     cover = prs.slides.add_slide(blank)
     _px_bg(cover, PX_BLUE)
@@ -356,7 +342,7 @@ def build_pptx(spec, path):
     if subtitle:
         tf = _px_box(cover, Inches(1.0), Inches(5.2), Inches(11.3), Inches(1.4))
         _px_run(tf.paragraphs[0], subtitle, 19, PX_SOFT)
- 
+
     total = len(slides)
     section_no = 0
     for idx0, sl in enumerate(slides):
@@ -366,9 +352,9 @@ def build_pptx(spec, path):
         layout = str(sl.get("layout", "") or "").lower()
         if layout not in PX_LAYOUTS:
             layout = "content" if bullets else "section"
- 
+
         slide = prs.slides.add_slide(blank)
- 
+
         # ---- Bölüm ayracı ----
         if layout == "section":
             section_no += 1
@@ -383,11 +369,11 @@ def build_pptx(spec, path):
             tf.paragraphs[0].alignment = PP_ALIGN.RIGHT
             _px_run(tf.paragraphs[0], "%d / %d" % (idx, total), 10, PX_SOFT)
             continue
- 
+
         # ---- İçerik tipli slaytlar (ortak iskelet) ----
         _px_header(slide, s_title, title, idx, total)
         cy = Inches(1.95)
- 
+
         # ---- İki sütun / karşılaştırma ----
         if layout == "two-col":
             cols = sl.get("columns", []) or []
@@ -407,7 +393,7 @@ def build_pptx(spec, path):
                     yy = yy + Inches(0.7)
                 btf = _px_box(slide, xs[ci], yy, cw, Inches(4.4))
                 _px_bullets(btf, col.get("bullets", []) or [], size=16, gap=9)
- 
+
         # ---- Tablo ----
         elif layout == "table":
             headers = sl.get("headers", []) or []
@@ -434,7 +420,7 @@ def build_pptx(spec, path):
                         else:
                             cell.fill.fore_color.rgb = PX_TINT if ri % 2 else PX_WHITE
                         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
- 
+
         # ---- Vurgu kutusu (callout) ----
         elif layout == "callout":
             text = str(sl.get("text", "") or (bullets[0] if bullets else ""))
@@ -449,7 +435,7 @@ def build_pptx(spec, path):
             if extra:
                 etf = _px_box(slide, Inches(1.5), Inches(5.3), Inches(10.3), Inches(1.4))
                 _px_bullets(etf, extra, size=15, gap=7)
- 
+
         # ---- İstatistik kartları ----
         elif layout == "stats":
             stats = (sl.get("stats", []) or [])[:4]
@@ -471,15 +457,15 @@ def build_pptx(spec, path):
             if bullets:
                 btf = _px_box(slide, Inches(0.9), Inches(5.4), Inches(11.5), Inches(1.3))
                 _px_bullets(btf, bullets, size=15, gap=7)
- 
+
         # ---- Klasik madde slaytı ----
         else:
             btf = _px_box(slide, Inches(0.9), cy, Inches(11.5), Inches(4.7))
             _px_bullets(btf, bullets, size=18, gap=12)
- 
+
     prs.save(path)
- 
- 
+
+
 def build_pdf(spec, path):
     doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm,
                             topMargin=18 * mm, bottomMargin=18 * mm)
@@ -527,117 +513,29 @@ def build_pdf(spec, path):
     if not story:
         story.append(Paragraph(str(spec.get("summary", "Belge")), styles["BodyText"]))
     doc.build(story)
- 
- 
-def _anthropic_headers(betas):
-    h = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    if betas:
-        h["anthropic-beta"] = betas
-    return h
- 
- 
-def _collect_file_ids(content):
-    ids = []
-    for block in content or []:
-        if not isinstance(block, dict):
-            continue
-        if "code_execution_tool_result" in block.get("type", ""):
-            c = block.get("content")
-            inner = c.get("content") if isinstance(c, dict) else None
-            if isinstance(inner, list):
-                for o in inner:
-                    if isinstance(o, dict) and o.get("file_id"):
-                        ids.append(o["file_id"])
-    return ids
- 
- 
-def _download_anthropic_file(fid):
-    h = _anthropic_headers("files-api-2025-04-14")
-    name = "belge"
-    try:
-        mr = requests.get(FILES_API + "/" + fid, headers=h, timeout=60)
-        if mr.status_code == 200:
-            name = mr.json().get("filename", name) or name
-    except Exception:
-        pass
-    cr = requests.get(FILES_API + "/" + fid + "/content", headers=h, timeout=180)
-    cr.raise_for_status()
-    return name, cr.content
- 
- 
-def skills_generate(messages):
-    """Anthropic resmi Skill'leri (code execution) ile gercek dosya uretir."""
-    container = {"skills": SKILLS_LIST}
-    msgs = list(messages)
-    data = {}
-    for _ in range(8):
-        body = {
-            "model": SKILL_MODEL,
-            "max_tokens": 12000,
-            "system": DOC_SKILL_SYSTEM,
-            "messages": msgs,
-            "tools": [{"type": "code_execution_20250825", "name": "code_execution"}],
-            "container": container,
-        }
-        r = requests.post("https://api.anthropic.com/v1/messages",
-                          headers=_anthropic_headers(SKILL_BETAS), json=body, timeout=240)
-        if r.status_code != 200:
-            try:
-                msg = r.json().get("error", {}).get("message", "")
-            except Exception:
-                msg = (r.text or "")[:200]
-            raise RuntimeError("skill api " + str(r.status_code) + ": " + (msg or ""))
-        data = r.json()
-        cid = (data.get("container") or {}).get("id")
-        if cid:
-            container = {"id": cid, "skills": SKILLS_LIST}
-        if data.get("stop_reason") == "pause_turn":
-            msgs = msgs + [{"role": "assistant", "content": data.get("content", [])}]
-            continue
-        break
-    reply = "\n".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
-    files = []
-    for fid in _collect_file_ids(data.get("content", [])):
-        name, blob = _download_anthropic_file(fid)
-        stored = uuid.uuid4().hex + "__" + name
-        with open(os.path.join(FILES_DIR, stored), "wb") as f:
-            f.write(blob)
-        files.append({"id": stored, "name": name})
-    return reply, files
- 
- 
+
+
 BUILDERS = {"docx": build_docx, "xlsx": build_xlsx, "pptx": build_pptx, "pdf": build_pdf}
- 
- 
+
+
 @app.get("/")
 def health():
     return {"ok": True, "service": "kocderma-belge", "key": bool(ANTHROPIC_API_KEY)}
- 
- 
+
+
 @app.post("/doc")
 def make_doc(req: DocReq):
     if not ANTHROPIC_API_KEY:
         return {"reply": "Sunucuda API anahtari ayarli degil.", "files": []}
     if not req.messages:
         return {"reply": "Bos istek.", "files": []}
- 
-    # 1) Resmi Skill'lerle uret (en iyi kalite)
-    skill_err = ""
-    try:
-        s_reply, s_files = skills_generate(req.messages)
-        if s_files:
-            return {"reply": s_reply or "Belge hazir.", "files": s_files}
-        skill_err = "skill dosya uretmedi"
-    except Exception as e:
-        skill_err = str(e)
- 
-    # 2) Yedek: JSON taslagi + python ile uret
+
     try:
         text = call_claude(req.messages)
         spec = parse_spec(text)
     except Exception as e:
-        return {"reply": "Belge olusturulamadi (skill: " + skill_err + " / yedek: " + str(e) + ")", "files": []}
- 
+        return {"reply": "Belge olusturulamadi: " + str(e), "files": []}
+
     kind = str(spec.get("kind") or "docx").lower()
     if kind not in BUILDERS:
         kind = "docx"
@@ -645,7 +543,7 @@ def make_doc(req: DocReq):
     filename = re.sub(r"[^A-Za-z0-9_.\-çğıöşüÇĞİÖŞÜ ]", "", filename) or ("belge." + kind)
     if not filename.lower().endswith("." + kind):
         filename = filename + "." + kind
- 
+
     tmp = os.path.join(FILES_DIR, uuid.uuid4().hex + "." + kind)
     try:
         BUILDERS[kind](spec, tmp)
@@ -659,7 +557,7 @@ def make_doc(req: DocReq):
                 os.remove(tmp)
         except Exception:
             pass
- 
+
     # Dosyayı yanıtın içinde doğrudan (base64) gönderiyoruz. Render'ın geçici
     # diskine güvenmiyoruz — ikinci bir indirme isteği olmadığı için "dosya yok"
     # hatası ve cold-start/uyku arası kopma riski ortadan kalkar.
@@ -672,8 +570,8 @@ def make_doc(req: DocReq):
             "b64": base64.b64encode(data).decode("ascii"),
         }],
     }
- 
- 
+
+
 @app.get("/files/{file_id}")
 def get_file(file_id: str):
     if "/" in file_id or "\\" in file_id or ".." in file_id:
@@ -681,7 +579,5 @@ def get_file(file_id: str):
     path = os.path.join(FILES_DIR, file_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="dosya yok")
-    name = file_id.split("__", 1)[1] if "__" in file_id else file_id
-    return FileResponse(path, filename=name)
     name = file_id.split("__", 1)[1] if "__" in file_id else file_id
     return FileResponse(path, filename=name)
