@@ -43,8 +43,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-haiku-4-5-20251001"        # yedek (JSON) yontemi icin
-SKILL_MODEL = "claude-haiku-4-5-20251001"  # resmi Skill'ler icin (ucuz). Kalite icin "claude-sonnet-4-6" yap.
+MODEL = "claude-sonnet-4-6"        # yedek (JSON) yontemi icin
+SKILL_MODEL = "claude-sonnet-4-6"  # resmi Skill'ler (Claude belgeyi kendi uretir) icin
 
 # Site'deki model secici (Haiku/Sonnet/Opus) bu anahtarlari gonderir.
 # OPUS kimligi "model not found" hatasi verirse opus satirini duzelt
@@ -69,20 +69,25 @@ ALLOWED_ORIGINS = [
     "https://www.kocderma.com",
 ]
 
-# Türkçe karakterler için Unicode font (PDF). Linux'ta DejaVu genelde kuruludur.
+# Türkçe karakterler için Unicode font (PDF) — DejaVu repoya gömülü
+# (main.py ile aynı klasörde). Render'da sistem fontuna güvenmiyoruz.
+_HERE = os.path.dirname(os.path.abspath(__file__))
 PDF_FONT = "Helvetica"
-for _fp in [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-]:
-    if os.path.exists(_fp):
-        try:
-            pdfmetrics.registerFont(TTFont("DejaVu", _fp))
-            PDF_FONT = "DejaVu"
-            break
-        except Exception:
-            pass
+PDF_FONT_BOLD = "Helvetica-Bold"
+try:
+    _reg = os.path.join(_HERE, "DejaVuSans.ttf")
+    _bold = os.path.join(_HERE, "DejaVuSans-Bold.ttf")
+    if os.path.exists(_reg):
+        pdfmetrics.registerFont(TTFont("DejaVu", _reg))
+        PDF_FONT = "DejaVu"
+        PDF_FONT_BOLD = "DejaVu"
+        if os.path.exists(_bold):
+            pdfmetrics.registerFont(TTFont("DejaVu-Bold", _bold))
+            PDF_FONT_BOLD = "DejaVu-Bold"
+        pdfmetrics.registerFontFamily("DejaVu", normal="DejaVu", bold=PDF_FONT_BOLD,
+                                      italic="DejaVu", boldItalic=PDF_FONT_BOLD)
+except Exception:
+    PDF_FONT, PDF_FONT_BOLD = "Helvetica", "Helvetica-Bold"
 
 app = FastAPI()
 app.add_middleware(
@@ -659,8 +664,9 @@ def build_pdf(spec, path):
     doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm,
                             topMargin=18 * mm, bottomMargin=18 * mm)
     styles = getSampleStyleSheet()
-    for sn in ["Title", "Heading1", "Heading2", "Heading3", "BodyText"]:
-        styles[sn].fontName = PDF_FONT
+    for sn in ["Title", "Heading1", "Heading2", "Heading3"]:
+        styles[sn].fontName = PDF_FONT_BOLD
+    styles["BodyText"].fontName = PDF_FONT
     styles["Title"].textColor = acc
     styles["Title"].alignment = 0      # sola yasla
     styles["Title"].fontSize = 22
@@ -671,7 +677,7 @@ def build_pdf(spec, path):
     styles["BodyText"].leading = 14
 
     cell_style = styles["BodyText"].clone("cell", fontSize=9, leading=11)
-    head_cell = cell_style.clone("headcell", textColor=colors.white)
+    head_cell = cell_style.clone("headcell", textColor=colors.white, fontName=PDF_FONT_BOLD)
 
     story = []
     if spec.get("title"):
@@ -815,8 +821,9 @@ def make_doc(req: DocReq):
     if not req.messages:
         return {"reply": "Bos istek.", "files": []}
 
-    model_id = resolve_model(req.model)
-    print("[make_doc] istek modeli:", req.model, "->", model_id, flush=True)
+    # Belge üretimi her zaman Sonnet (kaliteli + Skills ile çalışıyor)
+    model_id = resolve_model("sonnet")
+    print("[make_doc] belge modeli:", model_id, flush=True)
 
     # 1) Resmi Skill'lerle uret (en iyi kalite)
     skill_err = ""
